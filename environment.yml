@@ -1,0 +1,36 @@
+name: llm4heg-env  # Name of your conda environment
+
+channels:
+  - pytorch         # PyTorch packages
+  - dglteam/label/cu121  # DGL precompiled for CUDA 12.1
+  - nvidia          # CUDA-related libraries (used by pytorch-cuda)
+  - conda-forge     # Community-maintained packages
+  - defaults        # Default Anaconda packages
+
+dependencies:
+  - python=3.10                # Python version (compatible with Torch 2.3)
+  
+  # Deep Learning Framework
+  - pytorch=2.3.1              # PyTorch version
+  - torchvision                # Vision utilities for PyTorch
+  - torchaudio                 # Audio utilities for PyTorch
+  - pytorch-cuda=12.1          # CUDA 12.1 support for GPU acceleration
+  
+  # Graph Neural Network Library
+  - dgl=2.3.0                  # Deep Graph Library, CUDA-enabled
+  
+  # Scientific Computing
+  - numpy=1.24.4               # Core numerical package
+  - scipy=1.14.0               # Scientific computation tools
+  - scikit-learn=1.3.2         # Machine learning utilities (metrics, preprocessing)
+  - networkx=3.0               # Graph utilities (preprocessing, visualization)
+  
+  # System Utilities
+  - pip                        # For installing pip-only packages
+
+  # Additional pip packages
+  - pip:
+      - transformers           # HuggingFace Transformers for LLMs
+      - tqdm                   # Progress bar
+      - datasets               # HuggingFace datasets
+      - wandb                  # Experiment tracking (optional, but useful)
