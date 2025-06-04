@@ -28,7 +28,8 @@ Each dataset in the `dataset` directory is in `.npz` format and includes:
 #### Finetune Vicuna 7B
 1. Download the dataset from the [*TAG4LP DATASET*](`https://drive.google.com/file/d/15ZWzRESVpNFowt3zfm3v8-5DGdnMjFzk/view`).
 2. Extract the `arxiv_data` like in suitable location in the directory. 
-![alt text](image.png)
+
+    ![alt text](image.png)
 3. Generate the dataset of dense subgraph in `.npz` format by running the `prepare_arxiv_2023.py` file with the command -
     ```bash 
     python prepare_arxiv_2023.py     --output_npz_path ./dataset/arxiv_2023_v2.npz     --dataset_name arxiv_2023     --text_data_file_path ./arxiv_data/arxiv_2023_orig/paper_info.csv     --graph_data_file_path ./arxiv_data/arxiv_2023/graph.pt     --node_id_field node_id     --max_text_length 2048     --num_nodes_subgraph 2000     --negative_ratio 5.0     --num_long_range 150
