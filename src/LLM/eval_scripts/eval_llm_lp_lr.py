@@ -3,8 +3,8 @@ import os
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import roc_auc_score
-import numpy as np
 
+import numpy as np
 
 def evaluate_predictions(pred_file, true_file, output_metrics_file):
     """Evaluate LLM predictions against ground truth and save metrics.
@@ -28,7 +28,8 @@ def evaluate_predictions(pred_file, true_file, output_metrics_file):
     score_dict ={}
     # Create dictionaries for mapping id to response (1 for Yes, 0 for No)
     pred_dict = {item["id"]: 1 if "Yes" in item["res"] else 0 for item in data_res}
-    true_dict = {item["id"]: 1 if "Yes" in item["conversations"][1]["value"] else 0 for item in data_true}
+    true_dict = {item["id"]: 1 if "Yes" in item["ground_truth"] else 0 for item in data_true}
+    
     for item in data_res:
         score_dict[item["id"]] = float(item.get("score", 1.0 if "Yes" in item["res"] else 0.0))
     # Extract predictions and ground truth for common IDs
@@ -42,13 +43,12 @@ def evaluate_predictions(pred_file, true_file, output_metrics_file):
     try:
         auc = roc_auc_score(truth, scores)
     except ValueError:
-        auc = float("nan")  # Handle case with only one class in truth
-
+        auc = float("nan") 
     # Compute metrics
     accuracy = accuracy_score(truth, pred)
     f1 = f1_score(truth, pred)
     precision, recall, f1, support = precision_recall_fscore_support(truth, pred, average = "binary")
-  
+
     # Print metrics
     print(f"LLM Link Prediction Performance (evaluated on {len(common_ids)} pairs):")
     print(f"Accuracy: {accuracy:.4f}")
@@ -56,7 +56,6 @@ def evaluate_predictions(pred_file, true_file, output_metrics_file):
     print(f"Recall: {recall:.4f}")
     print(f"F1-Score: {f1:.4f}")
     print(f"AUC: {auc:.4f}")
-  
 
     # Save metrics to file
     os.makedirs(os.path.dirname(output_metrics_file), exist_ok=True)
@@ -69,12 +68,13 @@ def evaluate_predictions(pred_file, true_file, output_metrics_file):
         f.write(f"AUC: {auc:.4f}\n")
 
 
+
 def main():
     """Main function to evaluate LLM link prediction performance."""
     # File paths (adjust if your output file name differs)
-    pred_file = "inference_results_lp_llm/Cora_1hop_test/preds.json"  # Path to your prediction file
-    true_file = "../../llm_pred/prompt_json/Cora_updated/1hop_test.json"  # Path to ground truth
-    metrics_file = "inference_results_lp_llm/Cora_1hop_test/eval_metrics.txt"  # Output metrics file
+    pred_file = "inference_results_lp_llm/Cora_met_test2_long_range/preds_yes_no.json"  # Path to your prediction file
+    true_file = "../../llm_pred/prompt_json/Cora_updated/hop3_eval.json"  # Path to ground truth
+    metrics_file = "inference_results_lp_llm/Cora_met_test2_long_range/eval_metrics_prompt_with_hop_distance.txt"  # Output metrics file
 
     # Step: Evaluate predictions
     print("Evaluating LLM performance...")
