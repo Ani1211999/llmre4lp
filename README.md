@@ -43,8 +43,9 @@ Each dataset in the `dataset` directory is in `.npz` format and includes:
 
 6. Generate training, inference and long_range_training and long-range inference data using`generate_prompt_json.py` with the commmand-
     ```bash
-    python generate_prompt_json.py --data_name Arxiv --mode train_all --save_dir ../llm_pred/prompt_json/Arxiv --npz_path ../dataset/arxiv_2023.npz
+    python generate_prompt_json.py --data_name Arxiv --mode llm_train --save_dir ../llm_pred/prompt_json/Arxiv --npz_path ../dataset/arxiv_2023.npz
     ```
+    The various datasets you need to generate are - [llm_train, 1hop_val, 1hop_test, hop3_val, hop3_eval].
 7. Repeat the above step for all the datasets and you should see a structure similar to this-
     ![alt text](image-1.png)
 
@@ -53,7 +54,7 @@ Each dataset in the `dataset` directory is in `.npz` format and includes:
     cd ../src/LLM
     bash train_lora_arxiv_slurm_job.sh
     python fastchat/model/apply_lora.py
-    bash eval.sh
+    bash eval.sh 
     ```
 
 ### Stage2 - Rewiring and GNN training
