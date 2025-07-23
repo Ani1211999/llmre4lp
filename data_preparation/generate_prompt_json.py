@@ -309,16 +309,16 @@ def generate_prompt_json(data_name, mode, save_dir, npz_path):
         raise ValueError(f"Invalid mode: {mode}. Use llm_train, 1hop_val, 1hop_test, hop3_val, hop3_eval")
 
     # --- Save JSON File ---
+    random.shuffle(prompt_list)
     print("[INFO] Template length:", len(prompt_list))
     if prompt_list:
         print("[INFO] First template:", prompt_list[0])
 
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    if not os.path.exists(f"{save_dir}/{data_name}"):
+        os.makedirs(f"{save_dir}/{data_name}")
 
-    save_path = os.path.join(save_dir, current_mode_save_path)
+    save_path = os.path.join(save_dir, data_name, current_mode_save_path)
     print("[INFO] Saving to:", save_path)
-
     with open(save_path, "w") as fout:
         json.dump(prompt_list, fout, indent=2, ensure_ascii=False)
 

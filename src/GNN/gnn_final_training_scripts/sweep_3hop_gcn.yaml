@@ -1,0 +1,27 @@
+program: gnn_final_training_scripts/gcn_3hop_lp_sweep.py
+method: grid  # You can change this to 'random' or 'bayes' if needed
+metric:
+  name: best_3hop_test_auc
+  goal: maximize
+
+parameters:
+  lr:
+    values: [0.00001, 0.00003,0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03]
+  hidden_dim:
+    values: [64, 128, 256]
+  out_dim:
+    values: [32, 64, 128]
+  dropout:
+    values: [0.0, 0.3, 0.5]
+  seed:
+    values: [42, 123, 777]
+  epochs:
+    value: 5000
+  npz_path:
+    value: ../../dataset/Arxiv.npz
+  dataset_name:
+    value: Arxiv
+  wandb_project:
+    value: link-prediction-3hop-gnn
+  wandb_name:
+    value: sweep-3hop-gcn

@@ -191,7 +191,7 @@ def sample_negatives_by_hop_distance(graph_nodes_list, graph_for_path_finding, n
         try:
             dist = nx.shortest_path_length(graph_for_path_finding, source=int(u), target=int(v))
             # Apply the distance constraint
-            if min_distance <= dist <= max_distance:
+            if min_distance < dist <= max_distance:
                 negatives.append([u, v])
         except nx.NetworkXNoPath:
             # If no path exists, its distance is considered infinity.

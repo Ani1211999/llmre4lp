@@ -1,0 +1,26 @@
+program: gnn_final_training_scripts/gcn_1hop_lp_rewired_sweep.py
+method: grid
+metric:
+  name: best_val_auc
+  goal: maximize
+parameters:
+  lr:
+    values: [0.001, 0.003, 0.01, 0.03]
+  hidden_dim:
+    values: [64, 128]
+  out_dim:
+    values: [32, 64]
+  dropout:
+    values: [0.0, 0.3, 0.5]
+  seed:
+    values: [42, 123, 777]
+  epochs:
+    value: 100
+  npz_path:
+    value: ../../dataset/cora_final_dataset.npz
+  rewired_edges_path:
+    value: ./cora_lr_rewired_edges/rewired_edges.npy
+  wandb_project:
+    value: link-prediction-gnn
+  wandb_name:
+    value: sweep-gcn-link-prediction

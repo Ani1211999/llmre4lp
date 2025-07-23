@@ -3,7 +3,7 @@ nohup deepspeed fastchat/train/train_lora_arxiv.py \
     --lora_r 8 \
     --lora_alpha 16 \
     --lora_dropout 0.05 \
-    --data_path ../../llm_pred/prompt_json/Arxiv/train_all.json \
+    --data_path ../../llm_prompt_dataset/Arxiv/llm_train.json \
     --output_dir ../../stage1_results_arxiv_lp/ \
     --num_train_epochs 2 \
     --fp16 True \

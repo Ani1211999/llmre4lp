@@ -319,7 +319,7 @@ def sample_negatives_by_hop_distance(graph_nodes_in_subgraph, graph_for_path_fin
         try:
             d = nx.shortest_path_length(graph_for_path_finding, u, v)
             # Apply the distance constraint
-            if min_distance <= d <= max_distance:
+            if min_distance < d <= max_distance:
                 negatives.append([u, v])
         except nx.NetworkXNoPath:
             # If no path exists, its distance is considered infinity.
@@ -370,7 +370,7 @@ def prepare_llm_training_data(pos_edges, neg_edges_pool, negative_ratio):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output_npz_path', required=True, help="Path to save the processed data NPZ file.")
+    parser.add_argument('--output_dir', required=True, help="Directory to save the processed data NPZ file.")
     parser.add_argument('--dataset_name', required=True, help="Name of the dataset (e.g., 'cora', 'citeseer').")
     parser.add_argument('--text_data_file_path', required=True, help="Path to the CSV file containing node text data.")
     parser.add_argument('--graph_data_file_path', required=True, help="Path to the .pt file containing PyG graph data.")
@@ -379,172 +379,143 @@ def main():
     parser.add_argument('--num_nodes_subgraph', type=int, default=2000, help="Target number of nodes for the subgraph.")
     parser.add_argument('--negative_ratio', type=float, default=2.0, help="Ratio of negative to positive samples for LLM training and evaluation.")
     parser.add_argument('--num_long_range_samples_total', type=int, default=300, 
-                             help="Total number of long-range (e.g., 3-hop) samples to split between LLM training and k-hop testing.")
+                        help="Total number of long-range (e.g., 3-hop) samples to split between LLM training and k-hop testing.")
     parser.add_argument('--long_range_train_ratio', type=float, default=0.8, 
-                             help="Ratio of num_long_range_samples_total for LLM training.")
-    
+                        help="Ratio of num_long_range_samples_total for LLM training.")
+    parser.add_argument('--long_range_val_ratio', type=float, default=0.1,  # New argument for validation
+                        help="Ratio of num_long_range_samples_total for LLM validation (e.g., 3-hop val).")
     args = parser.parse_args()
     basics.set_seeds(42)
 
     # --- 1. Load and Subgraph Extraction ---
     print("Loading and extracting subgraph...")
     original_graph_data, original_df_text = load_tag_data(args.text_data_file_path, args.graph_data_file_path)
-
     if original_graph_data.is_directed():
         original_graph_data.edge_index = to_undirected(original_graph_data.edge_index)
     original_graph_data.edge_index, _ = coalesce(original_graph_data.edge_index, None, num_nodes=original_graph_data.num_nodes)
     original_graph_data.edge_index, _ = remove_self_loops(original_graph_data.edge_index)
     print(f"Original graph: {original_graph_data.num_nodes} nodes, {original_graph_data.edge_index.shape[1]} edges (undirected, no self-loops).")
-
     graph_data, df_text, node_mapping = extract_dense_subgraph(
         original_graph_data, original_df_text, args.node_id_field, args.num_nodes_subgraph
     )
     actual_num_nodes_subgraph = graph_data.num_nodes 
     print(f"Extracted subgraph has {actual_num_nodes_subgraph} nodes and {graph_data.edge_index.shape[1]} edges.")
-
     # Prepare node features and text
     if not hasattr(graph_data, 'x') or graph_data.x is None:
         graph_data.x = create_dummy_features(graph_data.num_nodes)
-    
     node_texts_list = [f"Title: {row['title']} Abstract: {row['abstract']}" 
-                               for _, row in df_text.iterrows()]
+                       for _, row in df_text.iterrows()]
     node_texts = np.array(node_texts_list, dtype=object)
-    
     # All 1-hop edges in the *full subgraph*
     all_subgraph_1_hop_edges_numpy = graph_data.edge_index.numpy()
     all_1_hop_edges_set = edges_to_set(all_subgraph_1_hop_edges_numpy)
-
     # Create NetworkX graph for shortest path calculations for all negative sampling 
     nx_full_subgraph = nx.Graph()
     subgraph_nodes_list = list(range(actual_num_nodes_subgraph))
     nx_full_subgraph.add_nodes_from(subgraph_nodes_list)
-    nx_full_subgraph.add_edges_from(graph_data.edge_index.numpy().T.tolist()) # All 1-hop edges of the subgraph 
+    nx_full_subgraph.add_edges_from(graph_data.edge_index.numpy().T.tolist())
 
     # --- 2. Split 1-hop edges for standard LP evaluation ---
     train_1_hop_edges, val_1_hop_edges, test_1_hop_edges = split_disjoint_edges(
         all_subgraph_1_hop_edges_numpy, train_ratio=0.8, val_ratio=0.1
     )
     print(f"1-hop splits: Train {train_1_hop_edges.shape[1]}, Val {val_1_hop_edges.shape[1]}, Test {test_1_hop_edges.shape[1]} edges.")
-    
+
     # --- 3. Construct Training Graph (for long-range training) ---
-    # The training graph explicitly excludes validation and test 1-hop edges 
     training_graph_edges_torch = torch.tensor(train_1_hop_edges, dtype=torch.long)
     training_graph_edges_torch = to_undirected(training_graph_edges_torch)
     training_graph_edges_torch, _ = coalesce(training_graph_edges_torch, None, num_nodes=actual_num_nodes_subgraph)
     training_graph_edges_torch, _ = remove_self_loops(training_graph_edges_torch)
     print(f"Training graph (1-hop train only): {training_graph_edges_torch.shape[1]} edges.")
 
-
     # --- 4. Generate 3-hop positive/negative samples for LLM training and 3-hop test ---
     print("\nGenerating long-range training and evaluation data (3-hop)...")
-    
-    # Calculate ALL 3-hop positives in the training graph for initial sampling pool 
-    # This pool will then be split for LLM training and 3-hop test. 
-    # This logic is correct for the *context* of training on a reduced graph.
     all_3_hop_pos_in_train_graph = get_k_hop_edges_matrix_power(
-        edge_index=training_graph_edges_torch, # Paths found only using training 1-hop edges 
+        edge_index=training_graph_edges_torch,
         num_nodes=actual_num_nodes_subgraph,
         max_k=3,
-        exclude_edges_set=None # No exclusion needed here, we want all 3-hop paths in training graph
+        exclude_edges_set=None
     ).get(3, np.empty((2,0), dtype=int))
-    
     print(f"Found {all_3_hop_pos_in_train_graph.shape[1]} 3-hop positive edges within the training graph.")
-
-    # Determine how many 3-hop positives we need in total, and split 
     total_3_hop_pos_to_sample = min(args.num_long_range_samples_total, all_3_hop_pos_in_train_graph.shape[1])
-    
-    hop3_train_edges = np.empty((2,0), dtype=int) 
+    hop3_train_edges = np.empty((2,0), dtype=int)
+    hop3_val_edges = np.empty((2,0), dtype=int)
     hop3_test_edges = np.empty((2,0), dtype=int)
-    
-    if total_3_hop_pos_to_sample > 0: 
-        # Sample the total budget from the available 3-hop positives 
+    if total_3_hop_pos_to_sample > 0:
         sampled_indices_total = np.random.choice(all_3_hop_pos_in_train_graph.shape[1], total_3_hop_pos_to_sample, replace=False)
         total_sampled_3_hop_pos = all_3_hop_pos_in_train_graph[:, sampled_indices_total]
-
-        # Split into 3-hop training and 3-hop test 
-        num_hop3_train = int(total_sampled_3_hop_pos.shape[1] * args.long_range_train_ratio) 
-        hop3_train_edges = total_sampled_3_hop_pos[:, :num_hop3_train] 
-        hop3_test_edges = total_sampled_3_hop_pos[:, num_hop3_train:] 
-        
-        print(f"  Split {total_sampled_3_hop_pos.shape[1]} 3-hop positives: 3-hop Train {hop3_train_edges.shape[1]}, 3-hop Test {hop3_test_edges.shape[1]}.") 
+        hop3_train_edges, hop3_val_edges, hop3_test_edges = split_disjoint_edges(
+            total_sampled_3_hop_pos,
+            train_ratio=args.long_range_train_ratio,
+            val_ratio=args.long_range_val_ratio
+        )
+        print(f"  Split {total_sampled_3_hop_pos.shape[1]} 3-hop positives: Train {hop3_train_edges.shape[1]}, Val {hop3_val_edges.shape[1]}, Test {hop3_test_edges.shape[1]}.")
     else:
         print("No 3-hop positive edges found to sample for long-range tasks.")
 
-    # --- CRITICAL FIX: Define the GLOBAL exclusion set *after* all positive sets are determined ---
-    # This set will contain ALL 1-hop positive edges (train, val, test)
-    # AND ALL 3-hop positive edges (train and test for the 3-hop task).
+    # --- Define GLOBAL exclusion set ---
     global_positive_exclusion_set = all_1_hop_edges_set.union(
         edges_to_set(hop3_train_edges)).union(
+        edges_to_set(hop3_val_edges)).union(
         edges_to_set(hop3_test_edges)
     )
-    print(f"Global positive exclusion set (1-hop + 3-hop train/test positives): {len(global_positive_exclusion_set)}")
+    print(f"Global positive exclusion set (1-hop + 3-hop train/val/test positives): {len(global_positive_exclusion_set)}")
 
-
-    # --- Regenerate 1-hop negatives using the GLOBAL exclusion set ---
+    # --- Regenerate 1-hop negatives ---
     total_1_hop_neg_samples_needed = (train_1_hop_edges.shape[1] + val_1_hop_edges.shape[1] + test_1_hop_edges.shape[1]) * args.negative_ratio
-    
     all_candidate_1_hop_neg_edges = sample_negative_edges(
         actual_num_nodes_subgraph, 
-        global_positive_exclusion_set, # Use the comprehensive GLOBAL exclusion set
-        num_samples = int(total_1_hop_neg_samples_needed * 1.5), # Generate more than needed
+        global_positive_exclusion_set,
+        num_samples = int(total_1_hop_neg_samples_needed * 1.5),
         graph_nodes_in_subgraph = subgraph_nodes_list,
         max_attempts_multiplier=500 
     )
-    print(f"Re-generated {all_candidate_1_hop_neg_edges.shape[1]} total candidate 1-hop negative edges using global exclusion.")
-
-    # Split the candidate 1-hop negatives disjoinly
     train_neg_1_hop_edges, val_neg_1_hop_edges, test_neg_1_hop_edges = split_disjoint_edges(
         all_candidate_1_hop_neg_edges, train_ratio=0.8, val_ratio=0.1
     )
-    # Adjust number of negatives to match ratio, by truncating if too many were sampled
     train_neg_1_hop_edges = train_neg_1_hop_edges[:, :int(train_1_hop_edges.shape[1] * args.negative_ratio)]
     val_neg_1_hop_edges = val_neg_1_hop_edges[:, :int(val_1_hop_edges.shape[1] * args.negative_ratio)]
     test_neg_1_hop_edges = test_neg_1_hop_edges[:, :int(test_1_hop_edges.shape[1] * args.negative_ratio)]
-    print(f"1-hop negative splits (re-adjusted): Train {train_neg_1_hop_edges.shape[1]}, Val {val_neg_1_hop_edges.shape[1]}, Test {test_neg_1_hop_edges.shape[1]} edges.")
 
-
-    # --- Generate 3-hop negative samples using the GLOBAL exclusion set ---
-    total_3_hop_neg_samples_needed = (hop3_train_edges.shape[1] + hop3_test_edges.shape[1]) * args.negative_ratio
-
+    # --- Generate 3-hop negative samples ---
+    total_3_hop_neg_samples_needed = (hop3_train_edges.shape[1] + hop3_val_edges.shape[1] + hop3_test_edges.shape[1]) * args.negative_ratio
     all_candidate_3_hop_neg_edges = sample_negatives_by_hop_distance(
         graph_nodes_in_subgraph=subgraph_nodes_list,
-        graph_for_path_finding=nx_full_subgraph, # Use full subgraph for distances
-        num_samples=int(total_3_hop_neg_samples_needed * 1.5), # Generate more than needed
-        min_distance=3, max_distance=float('inf'), # Negatives must have distance >= 3 (including infinite)
-        specific_positive_edges_to_exclude_set=global_positive_exclusion_set # Use the comprehensive GLOBAL exclusion set
+        graph_for_path_finding=nx_full_subgraph,
+        num_samples=int(total_3_hop_neg_samples_needed * 1.5),
+        min_distance=3, max_distance=float('inf'),
+        specific_positive_edges_to_exclude_set=global_positive_exclusion_set
     )
-    print(f"Generated {all_candidate_3_hop_neg_edges.shape[1]} total candidate 3-hop negative edges using global exclusion.")
-
-    # Split the candidate 3-hop negatives disjointly
-    hop3_train_neg_edges, hop3_val_neg_edges_dummy, hop3_test_neg_edges = split_disjoint_edges(
-        all_candidate_3_hop_neg_edges, train_ratio=args.long_range_train_ratio, val_ratio=0 # Val ratio is 0 for these splits
+    hop3_train_neg_edges, hop3_val_neg_edges, hop3_test_neg_edges = split_disjoint_edges(
+        all_candidate_3_hop_neg_edges, 
+        train_ratio=args.long_range_train_ratio, 
+        val_ratio=args.long_range_val_ratio
     )
-    # Adjust number of negatives to match ratio, by truncating if too many were sampled
     hop3_train_neg_edges = hop3_train_neg_edges[:, :int(hop3_train_edges.shape[1] * args.negative_ratio)]
+    hop3_val_neg_edges = hop3_val_neg_edges[:, :int(hop3_val_edges.shape[1] * args.negative_ratio)]
     hop3_test_neg_edges = hop3_test_neg_edges[:, :int(hop3_test_edges.shape[1] * args.negative_ratio)]
-    print(f"3-hop negative splits (re-adjusted): Train {hop3_train_neg_edges.shape[1]}, Test {hop3_test_neg_edges.shape[1]}.")
 
-
-    # --- Generate LLM 1-hop training data (using the pre-split 1-hop train/neg_train) ---
-    print("\nPreparing LLM 1-hop training data...")
-    # For LLM 1-hop training, just take the already prepared 1-hop train positives and negatives.
-    # These were already generated with comprehensive exclusion.
-    llm_train_edges_1_hop, llm_train_labels_1_hop = prepare_llm_training_data(
-        pos_edges=train_1_hop_edges,
-        neg_edges_pool=train_neg_1_hop_edges, # Use the already filtered and split 1-hop train negs
-        negative_ratio=args.negative_ratio # This will ensure correct balancing
+    # --- Generate LLM combined training data ---
+    llm_train_pos_edges = np.concatenate([train_1_hop_edges, hop3_train_edges], axis=1)
+    llm_train_neg_edges_pool = np.concatenate([train_neg_1_hop_edges, hop3_train_neg_edges], axis=1)
+    llm_train_edges_combined, llm_train_labels_combined = prepare_llm_training_data(
+        pos_edges=llm_train_pos_edges,
+        neg_edges_pool=llm_train_neg_edges_pool,
+        negative_ratio=args.negative_ratio 
     )
-    print(f"LLM 1-hop training data: {llm_train_edges_1_hop.shape[1]} samples ({np.sum(llm_train_labels_1_hop)} pos, {np.sum(llm_train_labels_1_hop==0)} neg).")
 
     # --- Save final dataset ---
-    print(f"\nSaving processed data to {args.output_npz_path}...")
+    output_dir = args.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+    output_filename = f"{args.dataset_name}.npz"
+    output_path = os.path.join(output_dir, output_filename)
+    print(f"\nSaving processed data to {output_path}...")
     np.savez(
-        args.output_npz_path,
+        output_path,
         # Core graph data 
-        edges=graph_data.edge_index.numpy(), # All 1-hop edges of the subgraph 
+        edges=graph_data.edge_index.numpy(),
         node_features=graph_data.x.numpy(),
         node_texts=node_texts,
-        
         # Standard 1-hop splits 
         train_edges=train_1_hop_edges,
         val_edges=val_1_hop_edges,
@@ -552,93 +523,23 @@ def main():
         train_neg_edges=train_neg_1_hop_edges,
         val_neg_edges=val_neg_1_hop_edges,
         test_neg_edges=test_neg_1_hop_edges,
-        
-        # K-hop evaluation sets (only 3-hop now) 
+        # K-hop evaluation sets (now with val)
         hop3_train_edges=hop3_train_edges, 
-        hop3_train_neg_edges=hop3_train_neg_edges, 
+        hop3_val_edges=hop3_val_edges, 
         hop3_test_edges=hop3_test_edges,
+        hop3_train_neg_edges=hop3_train_neg_edges, 
+        hop3_val_neg_edges=hop3_val_neg_edges, 
         hop3_test_neg_edges=hop3_test_neg_edges,
-        
-        # LLM specific training data (only 1-hop now) 
-        llm_train_edges=llm_train_edges_1_hop, 
-        llm_train_labels=llm_train_labels_1_hop, 
-        
+        # LLM specific training data 
+        llm_train_edges=llm_train_edges_combined, 
+        llm_train_labels=llm_train_labels_combined, 
         # Metadata 
         node_mapping=np.array(list(node_mapping.items())) # Old_ID -> New_ID 
     )
     print("Data processing complete!")
 
-    # --- Sanity Checks (Add these at the end of main to verify) ---
-    print("\n--- Performing final overlap sanity checks ---")
+    # --- Optional: Add sanity checks (similar to the original file) ---
     
-    # Reload saved data for checks (to be absolutely sure)
-    loaded_data = np.load(args.output_npz_path, allow_pickle=True)
     
-    train_neg_set = edges_to_set(loaded_data['train_neg_edges'])
-    val_edges_set = edges_to_set(loaded_data['val_edges'])
-    test_edges_set = edges_to_set(loaded_data['test_edges'])
-    hop3_train_set = edges_to_set(loaded_data['hop3_train_edges'])
-    hop3_test_set = edges_to_set(loaded_data['hop3_test_edges'])
-    
-    # Overlap between 1-hop negatives and 3-hop positives (train)
-    overlap1 = train_neg_set.intersection(hop3_train_set)
-    if overlap1:
-        print(f"⚠️ Found {len(overlap1)} overlapping edges between 'train_neg_edges' and 'hop3_train_edges':")
-        for edge in list(overlap1)[:5]: # Print first 5 if many
-            print(edge)
-    else:
-        print("✅ No overlap between 'train_neg_edges' and 'hop3_train_edges'.")
-
-    # Overlap between 1-hop negatives and 3-hop positives (test)
-    overlap2 = train_neg_set.intersection(hop3_test_set)
-    if overlap2:
-        print(f"⚠️ Found {len(overlap2)} overlapping edges between 'train_neg_edges' and 'hop3_test_edges':")
-        for edge in list(overlap2)[:5]:
-            print(edge)
-    else:
-        print("✅ No overlap between 'train_neg_edges' and 'hop3_test_edges'.")
-
-    # Overlap between 3-hop train negatives and 1-hop positives (any split)
-    hop3_train_neg_set = edges_to_set(loaded_data['hop3_train_neg_edges'])
-    all_1_hop_pos_set = edges_to_set(loaded_data['train_edges']).union(val_edges_set).union(test_edges_set)
-    overlap3 = hop3_train_neg_set.intersection(all_1_hop_pos_set)
-    if overlap3:
-        print(f"⚠️ Found {len(overlap3)} overlapping edges between 'hop3_train_neg_edges' and ANY 1-hop positive edges:")
-        for edge in list(overlap3)[:5]:
-            print(edge)
-    else:
-        print("✅ No overlap between 'hop3_train_neg_edges' and any 1-hop positive edges.")
-
-    # Overlap between 3-hop test negatives and 1-hop positives (any split)
-    hop3_test_neg_set = edges_to_set(loaded_data['hop3_test_neg_edges'])
-    overlap4 = hop3_test_neg_set.intersection(all_1_hop_pos_set)
-    if overlap4:
-        print(f"⚠️ Found {len(overlap4)} overlapping edges between 'hop3_test_neg_edges' and ANY 1-hop positive edges:")
-        for edge in list(overlap4)[:5]:
-            print(edge)
-    else:
-        print("✅ No overlap between 'hop3_test_neg_edges' and any 1-hop positive edges.")
-
-    # Overlap between 3-hop train negatives and 3-hop test positives
-    overlap5 = hop3_train_neg_set.intersection(hop3_test_set)
-    if overlap5:
-        print(f"⚠️ Found {len(overlap5)} overlapping edges between 'hop3_train_neg_edges' and 'hop3_test_edges':")
-        for edge in list(overlap5)[:5]:
-            print(edge)
-    else:
-        print("✅ No overlap between 'hop3_train_neg_edges' and 'hop3_test_edges'.")
-
-    # Overlap between 3-hop test negatives and 3-hop train positives
-    overlap6 = hop3_test_neg_set.intersection(hop3_train_set)
-    if overlap6:
-        print(f"⚠️ Found {len(overlap6)} overlapping edges between 'hop3_test_neg_edges' and 'hop3_train_edges':")
-        for edge in list(overlap6)[:5]:
-            print(edge)
-    else:
-        print("✅ No overlap between 'hop3_test_neg_edges' and 'hop3_train_edges'.")
-
-    print("\n--- Finished overlap sanity checks ---")
-
-
 if __name__ == '__main__':
     main()

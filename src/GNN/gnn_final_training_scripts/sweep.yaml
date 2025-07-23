@@ -1,0 +1,24 @@
+program: gnn_final_training_scripts/gatedgcn_3hop_lp.py
+method: grid  # or 'random', or 'bayes' for Bayesian Optimization
+metric:
+  name: best_3hop_test_auc
+  goal: maximize
+parameters:
+  lr:
+    values: [0.001, 0.003, 0.01,0.03]  # 👈 different learning rates
+  hidden_dim:
+    values: [64, 128]
+  out_dim:
+    values: [32, 64]
+  dropout:
+    values: [0, 0.3, 0.5]
+  seed:
+    values: [42, 123, 777] 
+  epochs:
+    value: 100
+  npz_path:
+    value: ../../dataset/cora_final_dataset.npz
+  wandb_project:
+    value: link-prediction-3hop-gatedgcn
+  wandb_name:
+    value: sweep-run

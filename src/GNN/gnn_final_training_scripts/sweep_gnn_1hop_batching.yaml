@@ -1,0 +1,26 @@
+program: gnn_final_training_scripts/gatedgcn_1hop_batching_sweep.py
+method: grid
+metric:
+  name: best_val_auc
+  goal: maximize
+parameters:
+  batch_size:
+    values: [512,1024,2048]
+  lr:
+    values: [0.00001, 0.00003,0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03]
+  hidden_dim:
+    values: [64, 128, 256]
+  out_dim:
+    values: [32, 64, 128]
+  dropout:
+    values: [0.0, 0.3, 0.5]
+  seed:
+    values: [42, 123, 777]
+  epochs:
+    value: 5000
+  npz_path:
+    value: ../../dataset/Arxiv.npz
+  wandb_project:
+    value: link-prediction-gnn
+  wandb_name:
+    value: sweep-gcn-link-prediction

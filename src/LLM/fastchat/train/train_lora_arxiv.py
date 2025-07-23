@@ -21,7 +21,8 @@ import pathlib
 import typing
 import os
 import sys
-
+import wandb
+import json
 try:
     import deepspeed
     from deepspeed import zero
@@ -53,6 +54,10 @@ class TrainingArguments(transformers.TrainingArguments):
         },
     )
     flash_attn: bool = field(default=False)
+    report_to: typing.Optional[typing.List[str]] = field(
+        default_factory=lambda: ["wandb"],  # <-- Enable wandb logging
+        metadata={"help": "List of integrations to report the results and logs to."},
+    )
 
 
 @dataclass
@@ -218,6 +223,29 @@ def train():
 
     # Dataset
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
+    
+    if training_args.report_to and "wandb" in training_args.report_to:
+        def safe_dict(d):
+            safe = {}
+            for k, v in d.items():
+                try:
+                    json.dumps(v)  # test if serializable
+                    safe[k] = v
+                except (TypeError, OverflowError):
+                    safe[k] = str(v)  # fallback: store as string
+            return safe
+
+        # Initialize wandb with safe config
+        wandb.init(
+            project="lora-finetune-arxiv",
+            name=f"{model_args.model_name_or_path}-finetune",
+            config={
+                **safe_dict(vars(training_args)),
+                **safe_dict(vars(model_args)),
+                **safe_dict(vars(data_args)),
+                **safe_dict(vars(lora_args)),
+            },
+        )
 
     # Trainer
     trainer = Trainer(
@@ -245,7 +273,8 @@ def train():
 
     if training_args.local_rank == 0:
         model.save_pretrained(training_args.output_dir, state_dict=state_dict)
-
+    if training_args.report_to and "wandb" in training_args.report_to:
+        wandb.finish()
 
 if __name__ == "__main__":
     train()

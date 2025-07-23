@@ -1,0 +1,174 @@
+from torch.utils.data import DataLoader, TensorDataset
+import numpy as np
+import os
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import dgl
+from dgl.nn import GatedGraphConv
+from sklearn.metrics import roc_auc_score, average_precision_score
+import wandb
+import random
+
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+class GatedGCN(nn.Module):
+    def __init__(self, in_feats, hidden_dim, out_dim, n_steps=3, dropout=0.5):
+        super(GatedGCN, self).__init__()
+        self.linear_in = nn.Linear(in_feats, hidden_dim)
+        self.gnn = GatedGraphConv(
+            in_feats=hidden_dim,
+            out_feats=hidden_dim,
+            n_steps=n_steps,
+            n_etypes=1  # homogeneous graph
+        )
+        self.linear_out = nn.Linear(hidden_dim, out_dim)
+        self.dropout = dropout
+
+    def forward(self, g, x):
+        x = self.linear_in(x)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+
+        etype = torch.zeros(g.num_edges(), dtype=torch.long, device=g.device)  # homogeneous: all edges type 0
+        x = self.gnn(g, x, etype)
+
+        x = self.linear_out(x)
+        return x
+
+
+def dot_product_score(z, edge_index):
+    z = F.normalize(z, p=2, dim=1)
+    z_u = z[edge_index[0]]
+    z_v = z[edge_index[1]]
+    return (z_u * z_v).sum(dim=1)
+
+
+@torch.no_grad()
+def evaluate(model, g, x, pos_edges, neg_edges):
+    model.eval()
+    z = model(g, x)
+    pos_scores = dot_product_score(z, pos_edges)
+    neg_scores = dot_product_score(z, neg_edges)
+
+    scores = torch.cat([pos_scores, neg_scores], dim=0).cpu()
+    labels = torch.cat([
+        torch.ones(pos_scores.size(0)),
+        torch.zeros(neg_scores.size(0))
+    ], dim=0)
+    auc = roc_auc_score(labels, scores)
+    ap = average_precision_score(labels, scores)
+    return auc, ap
+
+def run(config=None):
+    with wandb.init(config=config):
+        config = wandb.config
+        set_seed(config.seed)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        print("📂 Loading dataset...")
+        data = np.load(config.npz_path, allow_pickle=True)
+
+        x = torch.tensor(data['node_features'], dtype=torch.float).to(device)
+
+        train_edges = torch.tensor(data['train_edges'], dtype=torch.long).to(device)
+        train_neg_edges = torch.tensor(data['train_neg_edges'], dtype=torch.long).to(device)
+        val_edges = torch.tensor(data['val_edges'], dtype=torch.long).to(device)
+        val_neg_edges = torch.tensor(data['val_neg_edges'], dtype=torch.long).to(device)
+        test_edges = torch.tensor(data['test_edges'], dtype=torch.long).to(device)
+        test_neg_edges = torch.tensor(data['test_neg_edges'], dtype=torch.long).to(device)
+
+        # For message passing
+        train_mp_edges = torch.cat([train_edges, train_edges[[1, 0]]], dim=1)
+        g = dgl.graph((train_mp_edges[0], train_mp_edges[1]), num_nodes=x.size(0)).to(device)
+
+        model = GatedGCN(
+            in_feats=x.shape[1],
+            hidden_dim=config.hidden_dim,
+            out_dim=config.out_dim,
+            dropout=config.dropout
+        ).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
+
+        # Create edge batches
+        batch_size = config.batch_size if hasattr(config, 'batch_size') else 1024
+        edge_dataset = TensorDataset(train_edges[0], train_edges[1], train_neg_edges[0], train_neg_edges[1])
+        edge_loader = DataLoader(edge_dataset, batch_size=batch_size, shuffle=True)
+
+        best_val_auc, best_test_auc, best_epoch = 0, 0, 0
+        no_improvement = 0
+        patience = 20
+
+        print("🚀 Starting training with batching...")
+        for epoch in range(1, config.epochs + 1):
+            model.train()
+            optimizer.zero_grad()
+            
+
+            z = model(g, x).detach()  # Full-graph forward once per epoch
+            total_loss = 0.0
+            
+            for pos_u, pos_v, neg_u, neg_v in edge_loader:
+                pos_edge = torch.stack([pos_u, pos_v], dim=0).to(device)
+                neg_edge = torch.stack([neg_u, neg_v], dim=0).to(device)
+
+
+                pos_score = dot_product_score(z, pos_edge)
+                neg_score = dot_product_score(z, neg_edge)
+
+                scores = torch.cat([pos_score, neg_score], dim=0)
+                labels = torch.cat([
+                    torch.ones(pos_score.size(0)),
+                    torch.zeros(neg_score.size(0))
+                ]).to(device)
+
+                # loss = F.binary_cross_entropy_with_logits(scores, labels)
+                # loss.backward()
+                # optimizer.step()
+                # total_loss += loss.item()
+                batch_loss = F.binary_cross_entropy_with_logits(scores, labels)
+                total_loss += batch_loss    
+            total_loss.backward()       # 🔥 backpropagate once
+            optimizer.step()
+            val_auc, val_ap = evaluate(model, g, x, val_edges, val_neg_edges)
+            test_auc, test_ap = evaluate(model, g, x, test_edges, test_neg_edges)
+
+            if val_auc > best_val_auc:
+                best_val_auc = val_auc
+                best_test_auc = test_auc
+                best_epoch = epoch
+                no_improvement = 0
+            else:
+                no_improvement += 1
+                if no_improvement >= patience:
+                    print(f"⏹️ Early stopping at epoch {epoch}")
+                    break
+
+            avg_loss = total_loss / len(edge_loader)
+            print(f"Epoch {epoch:03d} | Loss: {avg_loss:.4f} | Val AUC: {val_auc:.4f} | Test AUC: {test_auc:.4f}")
+            wandb.log({
+                'epoch': epoch,
+                'loss': avg_loss,
+                'val_auc': val_auc,
+                'val_ap': val_ap,
+                'test_auc': test_auc,
+                'test_ap': test_ap,
+                'best_val_auc': best_val_auc,
+                'best_test_auc': best_test_auc,
+                'best_epoch': best_epoch,
+                'seed': config.seed
+            })
+
+        print(f"\n✅ Best Val AUC: {best_val_auc:.4f}, Corresponding Test AUC: {best_test_auc:.4f}")
+
+if __name__ == "__main__":
+    run()
