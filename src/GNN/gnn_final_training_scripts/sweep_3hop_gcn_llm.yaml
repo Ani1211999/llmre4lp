@@ -1,4 +1,4 @@
-program: gnn_final_training_scripts/gatedgcn_3hop_lp_sweep.py
+program: gnn_final_training_scripts/gatedgcn_3hop_llm_embeds_sweep.py
 method: grid  # You can change this to 'random' or 'bayes' if needed
 metric:
   name: best_3hop_test_auc
@@ -8,17 +8,19 @@ parameters:
   lr:
     values: [0.00001,0.0001,0.001, 0.01]
   hidden_dim:
-    values: [64, 128, 256]
+    values: [128, 256]
   out_dim:
-    values: [32, 64, 128]
+    values: [64, 128]
   dropout:
     values: [0.3, 0.5]
   seed:
     values: [42, 123, 777]
   epochs:
     value: 5000
-  npz_path:
+  dataset_npz_path:
     value: ../../dataset/Arxiv.npz
+  llm_embeddings_npz_path:
+    value: ../../dataset/llm_embeddings/Arxiv_text_embeddings.npz
   dataset_name:
     value: Arxiv
   wandb_project:

@@ -8,7 +8,7 @@ import json
 import ray
 import sys
 import os.path as osp
-sys.path.append("/home/lsj/sourceCode/llm4heg/src/LLM")
+sys.path.append("/mnt/webscistorage/cc7738/ws_aniket/llmre4lp/src/LLM")
 
 from fastchat.model.LLM4HeG import LLM4HeGForCausalLM
 from fastchat.conversation import SeparatorStyle, get_conv_template
@@ -45,8 +45,7 @@ def run_eval(args, num_gpus):
     else: 
         raise ValueError('error in the number of list')
     
-    if osp.exists(args.output_res_path) is False: 
-        os.mkdir(args.output_res_path)
+    os.makedirs(args.output_res_path, exist_ok=True)
     
     for idx in range(len(idx_list) - 1):
         start_idx = idx_list[idx]

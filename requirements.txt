@@ -5,3 +5,4 @@ scipy==1.14.0
 torch==2.3.1+cu121
 deepspeed==0.16.6
 wandb
+sentence-transformers

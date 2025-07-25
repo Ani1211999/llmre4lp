@@ -1,4 +1,4 @@
-program: gnn_final_training_scripts/gcn_1hop_lp_rewired_sweep.py
+program: gnn_final_training_scripts/gatedgcn_1hop_lp_rewired_sweep.py
 method: grid
 metric:
   name: best_val_auc
@@ -17,9 +17,9 @@ parameters:
   epochs:
     value: 100
   npz_path:
-    value: ../../dataset/cora_final_dataset.npz
+    value: ../../dataset/Arxiv.npz
   rewired_edges_path:
-    value: ./cora_lr_rewired_edges/rewired_edges.npy
+    value: ./arxiv_rewired_edges/rewired_edges.npy
   wandb_project:
     value: link-prediction-gnn
   wandb_name:

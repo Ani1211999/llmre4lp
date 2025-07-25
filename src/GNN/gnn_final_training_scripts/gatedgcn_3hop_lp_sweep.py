@@ -253,13 +253,14 @@ def run(config=None):
             f.write(f"LR: {config.lr}, Dropout: {config.dropout}\n")
 
 if __name__ == "__main__":
-    run({"lr": 0.001,
-    "hidden_dim": 512,
-    "out_dim": 256,
+    run({"lr": 0.0001,
+    "hidden_dim": 256,
+    "out_dim": 128,
     "dropout": 0.0,
     "seed": 42,
     "epochs": 1000,
     "npz_path": "../../dataset/Arxiv.npz",
     "dataset_name": "Arxiv",
     "wandb_project": "gatedgcn-lp-rewired",
-    "wandb_name": "debug-fast"})
+    "wandb_name": "debug-fast"
+    })

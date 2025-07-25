@@ -157,13 +157,5 @@ def run(config=None):
 
         print(f"\n✅ Best 3-hop Test AUC: {best_test_auc:.4f} at epoch {best_epoch}")
 
-        result_dir = f"results_rewired_sweep_llm/{config.dataset_name}"
-        os.makedirs(result_dir, exist_ok=True)
-        result_file = os.path.join(result_dir, f"{config.dataset_name}_lr{config.lr}_hd{config.hidden_dim}_do{config.dropout}_seed{config.seed}.txt")
-        with open(result_file, "w") as f:
-            f.write(f"Best 3-hop Test AUC: {best_test_auc:.4f}\n")
-            f.write(f"Best Epoch: {best_epoch}\n")
-            f.write(f"LR: {config.lr}, Dropout: {config.dropout}, Seed: {config.seed}\n")
-
 if __name__ == "__main__":
     run()

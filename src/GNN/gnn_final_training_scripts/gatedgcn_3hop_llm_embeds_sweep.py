@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import dgl
 from dgl.nn import GatedGraphConv
 from sklearn.metrics import roc_auc_score, average_precision_score
+import argparse
 import wandb
 import random
 
@@ -21,9 +22,10 @@ def set_seed(seed):
 class GatedGCN(nn.Module):
     def __init__(self, in_feats, hidden_dim, out_dim, n_steps=3, dropout=0.5):
         super(GatedGCN, self).__init__()
+        # Linear layer to project concatenated features (original + LLM embeddings)
         self.linear_projection = nn.Linear(in_feats, hidden_dim)
         self.gnn = GatedGraphConv(
-            in_feats=hidden_dim,
+            in_feats=hidden_dim,  # Input to GNN is hidden_dim after projection
             out_feats=hidden_dim,
             n_steps=n_steps,
             n_etypes=1
@@ -32,6 +34,7 @@ class GatedGCN(nn.Module):
         self.dropout = dropout
 
     def forward(self, g, x):
+        # Project concatenated features
         x = self.linear_projection(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -65,42 +68,40 @@ def run(config=None):
     with wandb.init(config=config):
         config = wandb.config
         set_seed(config.seed)
-
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        print("📂 Loading dataset with LLM embeddings...")
-        # Load original features
+        print("📂 Loading dataset...")
+        # Load original .npz file (containing dummy node_features)
         original_data = np.load(config.dataset_npz_path, allow_pickle=True)
         original_features = torch.tensor(original_data['node_features'], dtype=torch.float).to(device)
+        
+        # Load new .npz file (containing LLM embeddings as node_features)
+        data = np.load(config.llm_embeddings_npz_path, allow_pickle=True)
+        llm_embeddings = torch.tensor(data['node_features'], dtype=torch.float).to(device)
 
-        # Load LLM embeddings
-        llm_data = np.load(config.llm_embeddings_npz_path, allow_pickle=True)
-        llm_features = torch.tensor(llm_data['node_features'], dtype=torch.float).to(device)
+        # Verify node counts match
+        if original_features.shape[0] != llm_embeddings.shape[0]:
+            raise ValueError(f"Mismatch in node counts: original_features has {original_features.shape[0]} nodes, "
+                           f"llm_embeddings has {llm_embeddings.shape[0]} nodes.")
 
-        # Sanity check
-        if original_features.shape[0] != llm_features.shape[0]:
-            raise ValueError("Mismatch in number of nodes between original and LLM features!")
+        # Concatenate original features and LLM embeddings
+        x = torch.cat([original_features, llm_embeddings], dim=1)
+        print(f"Original features shape: {original_features.shape}")
+        print(f"LLM embeddings shape: {llm_embeddings.shape}")
+        print(f"Concatenated features shape: {x.shape}")
 
-        # Concatenate features
-        x = torch.cat([original_features, llm_features], dim=1)
-        print(f"Original shape: {original_features.shape} | LLM shape: {llm_features.shape} | Combined: {x.shape}")
-
-        # Load training and evaluation edges from LLM dataset
-        train_edges = torch.tensor(llm_data['train_edges'], dtype=torch.long).to(device)
-        train_neg_edges = torch.tensor(llm_data['train_neg_edges'], dtype=torch.long).to(device)
-        test_3hop_edges = torch.tensor(llm_data['hop3_test_edges'], dtype=torch.long).to(device)
-        test_3hop_neg_edges = torch.tensor(llm_data['hop3_test_neg_edges'], dtype=torch.long).to(device)
-
-        # Load rewired edges (optional topological augmentation)
-        rewired_edges = torch.tensor(np.load(config.rewired_edges_path), dtype=torch.long).to(device)
-        edge_index = torch.cat([train_edges, rewired_edges], dim=1)
-        edge_index = torch.cat([edge_index, edge_index[[1, 0]]], dim=1)
+        # Load other data from the new .npz file (LLM embeddings file)
+        train_edges = torch.tensor(data['train_edges'], dtype=torch.long).to(device)
+        train_neg_edges = torch.tensor(data['train_neg_edges'], dtype=torch.long).to(device)
+        test_3hop_edges = torch.tensor(data['hop3_test_edges'], dtype=torch.long).to(device)
+        test_3hop_neg_edges = torch.tensor(data['hop3_test_neg_edges'], dtype=torch.long).to(device)
 
         num_nodes = x.size(0)
-        g = dgl.graph((edge_index[0], edge_index[1]), num_nodes=num_nodes).to(device)
+        train_edges = torch.cat([train_edges, train_edges[[1, 0]]], dim=1)
+        g = dgl.graph((train_edges[0], train_edges[1]), num_nodes=num_nodes).to(device)
 
         model = GatedGCN(
-            in_feats=x.size(1),  # original + llm dimension
+            in_feats=x.shape[1],  # Input dimension is original_features + llm_embeddings (e.g., 128 + 384)
             hidden_dim=config.hidden_dim,
             out_dim=config.out_dim,
             dropout=config.dropout
@@ -132,6 +133,7 @@ def run(config=None):
             loss.backward()
             optimizer.step()
 
+            # Evaluate on 3-hop test edges
             test_auc, test_ap = evaluate(model, g, x, test_3hop_edges, test_3hop_neg_edges)
 
             if test_auc > best_test_auc:
@@ -156,14 +158,14 @@ def run(config=None):
             })
 
         print(f"\n✅ Best 3-hop Test AUC: {best_test_auc:.4f} at epoch {best_epoch}")
-
-        result_dir = f"results_rewired_sweep_llm/{config.dataset_name}"
-        os.makedirs(result_dir, exist_ok=True)
-        result_file = os.path.join(result_dir, f"{config.dataset_name}_lr{config.lr}_hd{config.hidden_dim}_do{config.dropout}_seed{config.seed}.txt")
-        with open(result_file, "w") as f:
-            f.write(f"Best 3-hop Test AUC: {best_test_auc:.4f}\n")
-            f.write(f"Best Epoch: {best_epoch}\n")
-            f.write(f"LR: {config.lr}, Dropout: {config.dropout}, Seed: {config.seed}\n")
+        # result_dir = "results_updated_scripts_final/"
+        # os.makedirs(result_dir, exist_ok=True)
+        # dataset_name = os.path.basename(config.npz_path).replace('.npz', '')
+        # result_file = os.path.join(result_dir, f"{dataset_name}_lr{config.lr}_hd{config.hidden_dim}_do{config.dropout}_seed{config.seed}.txt")
+        # with open(result_file, "w") as f:
+        #     f.write(f"Best 3-hop Test AUC: {best_test_auc:.4f}\n")
+        #     f.write(f"Best Epoch: {best_epoch}\n")
+        #     f.write(f"LR: {config.lr}, Dropout: {config.dropout}\n")
 
 if __name__ == "__main__":
     run()

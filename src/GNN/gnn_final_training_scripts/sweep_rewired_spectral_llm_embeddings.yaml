@@ -1,11 +1,11 @@
-program: gnn_final_training_scripts/gatedgcn_custom_loss_1hop_sweep.py
+program: gnn_final_training_scripts/gatedgcn_custom_loss_llm_embeddings_sweep.py
 method: grid
 metric:
-  name: best_val_auc
+  name: best_3hop_test_auc
   goal: maximize
 parameters:
   lr:
-    values: [0.00001, 0.0001, 0.001, 0.01, 0.03]
+    values: [0.00001,0.0001,0.001, 0.01]
   hidden_dim:
     values: [128, 256]
   out_dim:
@@ -18,10 +18,12 @@ parameters:
     values: [0.05, 0.1, 0.2, 0.3]
   epochs:
     value: 100
-  npz_path:
+  dataset_npz_path:
     value: ../../dataset/Arxiv.npz
   rewired_edges_path:
     value: ./arxiv_rewired_edges/rewired_edges.npy
+  llm_embeddings_npz_path:
+    value: ../../dataset/llm_embeddings/Arxiv_text_embeddings.npz
   dataset_name:
     value: Arxiv
   wandb_project:

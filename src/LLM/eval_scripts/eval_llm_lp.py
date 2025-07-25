@@ -72,9 +72,9 @@ def evaluate_predictions(pred_file, true_file, output_metrics_file):
 def main():
     """Main function to evaluate LLM link prediction performance."""
     # File paths (adjust if your output file name differs)
-    pred_file = "inference_results_lp_llm/Cora_1hop_test/preds.json"  # Path to your prediction file
-    true_file = "../../llm_pred/prompt_json/Cora_updated/1hop_test.json"  # Path to ground truth
-    metrics_file = "inference_results_lp_llm/Cora_1hop_test/eval_metrics.txt"  # Output metrics file
+    pred_file = "inference_results_lp_llm/Arxiv_1hop/test/preds.json"  # Path to your prediction file
+    true_file = "../../llm_prompt_dataset/Arxiv/1hop_test.json"  # Path to ground truth
+    metrics_file = "inference_results_lp_llm/Arxiv_1hop/test/eval_metrics.txt"  # Output metrics file
 
     # Step: Evaluate predictions
     print("Evaluating LLM performance...")

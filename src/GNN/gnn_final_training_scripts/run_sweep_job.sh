@@ -24,4 +24,4 @@ which g++
 
 # Check if deepspeed is installed and show version
 
-python gnn_final_training_scripts/sweep_runner_script.py
+python gnn_final_training_scripts/sweep_runner_script.py --sweep_id 9oau3es9
